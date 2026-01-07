@@ -1,0 +1,10 @@
+requirements.txt
+api_response.xlsx
+whatsapp_results.xlsx
+.git/
+__pycache__/
+*.pyc
+*.pyo
+.env.local
+node_modules/
+wppconnect-server/node_modules/

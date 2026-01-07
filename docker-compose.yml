@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  wppconnect:
+    build:
+      context: .
+      dockerfile: Dockerfile.wppconnect
+    container_name: wppconnect-server
+    ports:
+      - "21465:21465"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - bps-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:21465/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  python-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: python-scraper
+    depends_on:
+      wppconnect:
+        condition: service_healthy
+    environment:
+      - WPPCONNECT_URL=http://wppconnect:21465/api/sendMessage
+    volumes:
+      - ./api_response.xlsx:/app/api_response.xlsx
+      - ./whatsapp_results.xlsx:/app/whatsapp_results.xlsx
+      - ./.env:/app/.env:ro
+    networks:
+      - bps-network
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+networks:
+  bps-network:
+    driver: bridge

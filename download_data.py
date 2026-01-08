@@ -10,6 +10,11 @@ import json
 import gzip
 import pandas as pd
 
+# Create result folder if it doesn't exist
+RESULT_FOLDER = "result"
+if not os.path.exists(RESULT_FOLDER):
+    os.makedirs(RESULT_FOLDER)
+
 # Load environment variables from .env file
 load_dotenv()
 env_vars = dotenv_values(".env")
@@ -179,9 +184,10 @@ def saveResponseToExcel(captured_data, filename="api_response.xlsx"):
         # Convert to DataFrame
         df = pd.DataFrame(data_list)
         
-        # Save to Excel
-        df.to_excel(filename, index=False, sheet_name='Data')
-        print(f"Data saved to {filename} successfully!")
+        # Save to Excel in result folder
+        filepath = os.path.join(RESULT_FOLDER, filename)
+        df.to_excel(filepath, index=False, sheet_name='Data')
+        print(f"Data saved to {filepath} successfully!")
         return True
         
     except Exception as e:

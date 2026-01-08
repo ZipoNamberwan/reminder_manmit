@@ -2,3 +2,4 @@
 wppconnect-server/node_modules/
 result/
 wppconnect-server/tokens/
+__pycache__/*

@@ -21,7 +21,7 @@ CONTACTS = [
 ]
 
 # Debug mode: set to a specific date to test (e.g., "2024-01-15") or None for today
-DEBUG_DATE = None
+DEBUG_DATE = "2025-01-01"
 
 # Reminder settings
 ENABLE_INITIAL_REMINDER = False  # Enable/disable initial reminder (surveys starting today)
@@ -220,6 +220,54 @@ def send_final_reminder(df):
     
     return all_results
 
+def send_no_reminder_notification():
+    """
+    Send notification to admin contacts when there are no reminders for today
+    """
+    results = []
+    
+    # Filter admin contacts
+    admin_contacts = [c for c in CONTACTS if c.get("type") == "admin"]
+    
+    if not admin_contacts:
+        print("No admin contacts to notify")
+        return results
+    
+    message = "ℹ️ Info: Tidak ada pengingat survei untuk hari ini."
+    
+    print(f"\nNo reminders for today. Notifying {len(admin_contacts)} admin(s)...")
+    print("=" * 80)
+    
+    for contact in admin_contacts:
+        phone = contact["phone"]
+        name = contact["name"]
+        
+        print(f"Sending to {name} ({phone})...", end=" ")
+        
+        success = send_whatsapp_message(phone, message)
+        
+        if success:
+            print("✓ Sent")
+            results.append({
+                "phone": phone,
+                "name": name,
+                "status": "Sent",
+                "message": message
+            })
+        else:
+            print("✗ Failed")
+            results.append({
+                "phone": phone,
+                "name": name,
+                "status": "Failed",
+                "message": message
+            })
+        
+        time.sleep(1)
+    
+    print("=" * 80)
+    return results
+
 def save_results(results, filename="whatsapp_results.xlsx"):
     """Save results to Excel file"""
     try:
@@ -248,8 +296,14 @@ def main():
     final_results = send_final_reminder(df)
     all_results.extend(final_results)
     
+    # If no reminders were sent, notify admins
     if not all_results:
-        print("\nNo reminders sent today")
+        print("\nNo reminders to send today")
+        no_reminder_results = send_no_reminder_notification()
+        all_results.extend(no_reminder_results)
+    
+    if not all_results:
+        print("No messages sent today")
         return
     
     # Save results

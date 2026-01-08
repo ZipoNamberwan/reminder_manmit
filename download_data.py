@@ -5,19 +5,68 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from dotenv import load_dotenv, dotenv_values
 import os
+import sys
 import time
 import json
 import gzip
 import pandas as pd
+import requests
+
+# Add parent directory to path to import send_whatsapp
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Create result folder if it doesn't exist
 RESULT_FOLDER = "result"
 if not os.path.exists(RESULT_FOLDER):
     os.makedirs(RESULT_FOLDER)
 
+# WPPConnect API endpoint for sending messages
+WPPCONNECT_URL = "http://localhost:21465/api/sendMessage"
+
+# Import contacts from send_whatsapp
+from send_whatsapp import CONTACTS
+
 # Load environment variables from .env file
 load_dotenv()
 env_vars = dotenv_values(".env")
+
+def send_error_notification(error_message):
+    """Send error notification to admin contacts"""
+    try:
+        # Filter admin contacts
+        admin_contacts = [c for c in CONTACTS if c.get("type") == "admin"]
+        
+        if not admin_contacts:
+            print("No admin contacts to notify")
+            return
+        
+        message = f"❌ Error: Gagal mengunduh data survei.\n\nError: {error_message}"
+        
+        print(f"\nSending error notification to {len(admin_contacts)} admin(s)...")
+        print("=" * 80)
+        
+        for contact in admin_contacts:
+            phone = contact["phone"]
+            name = contact["name"]
+            
+            try:
+                payload = {
+                    "phone": phone,
+                    "message": message
+                }
+                response = requests.post(WPPCONNECT_URL, json=payload, timeout=5)
+                if response.status_code == 200:
+                    print(f"✓ Notified {name} ({phone})")
+                else:
+                    print(f"✗ Failed to notify {name} ({phone})")
+            except Exception as e:
+                print(f"✗ Error notifying {name} ({phone}): {str(e)}")
+            
+            time.sleep(1)
+        
+        print("=" * 80)
+    except Exception as e:
+        print(f"Error sending notification: {str(e)}")
 
 def getCredentialsFromEnv():
     """Get username and password from .env file"""
@@ -221,16 +270,7 @@ try:
     # Wait for the page to load
     time.sleep(3)
     
-    # You can interact with the page here
-    # Example: Find an element by CSS selector
-    # element = driver.find_element(By.CSS_SELECTOR, "selector_here")
-    
-    # Example: Wait for an element to be present (up to 10 seconds)
-    # wait = WebDriverWait(driver, 10)
-    # element = wait.until(EC.presence_of_element_located((By.ID, "id_here")))
-    
-    print("Page loaded successfully!")
-    
+
     # Click the login SSO button
     clickLoginSsoButton(driver)
     
@@ -263,6 +303,10 @@ try:
     
     # Keep the browser open for 5 seconds before closing
     time.sleep(5)
+    
+except Exception as error:
+    print(f"\n✗ FATAL ERROR: {str(error)}")
+    send_error_notification(str(error))
     
 finally:
     # Close the browser

@@ -4,20 +4,29 @@ import time
 import os
 import sys
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Create result folder if it doesn't exist
 RESULT_FOLDER = "result"
 if not os.path.exists(RESULT_FOLDER):
     os.makedirs(RESULT_FOLDER)
 
-# WPPConnect API endpoint
-WPPCONNECT_URL = "http://localhost:21465/api/sendMessage"
+# Majapahit API endpoint
+API_URL = "https://majapahit-api.majapahit.web.id/push-pesan/"
+API_HEADERS = {
+    'EXTERNAL-API-KEY': os.getenv('EXTERNAL_API_KEY'),
+    'Referer': 'majapahit',
+    'Pragma': '"no-cache"',
+}
 
 # Contacts loaded from Excel
 CONTACTS = []
 
 # Debug mode: set to a specific date to test (e.g., "2024-01-15") or None for today
-DEBUG_DATE = "2025-01-01"
+DEBUG_DATE = None
 
 # Reminder settings
 ENABLE_INITIAL_REMINDER = False  # Enable/disable initial reminder (surveys starting today)
@@ -75,14 +84,23 @@ def read_contacts_file(filename="contacts.xlsx"):
         return []
 
 def send_whatsapp_message(phone, message):
-    """Send WhatsApp message using WPPConnect"""
+    """Send WhatsApp message using Majapahit API"""
     try:
+        # Convert phone to string (in case it's read as int from Excel)
+        phone_str = str(phone)
+        
+        # Add @c.us suffix if not already present
+        if not phone_str.endswith('@c.us'):
+            id_whatsapp = f"{phone_str}@c.us"
+        else:
+            id_whatsapp = phone_str
+        
         payload = {
-            "phone": phone,
-            "message": message
+            "id_whatsapp": id_whatsapp,
+            "pesan": message
         }
-        response = requests.post(WPPCONNECT_URL, json=payload)
-        return response.status_code == 200
+        response = requests.post(API_URL, headers=API_HEADERS, json=payload)
+        return response.status_code == 201
     except Exception as e:
         print(f"ERROR: Failed to send message to {phone} - {str(e)}")
         return False

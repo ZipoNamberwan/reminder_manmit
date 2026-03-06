@@ -13,12 +13,8 @@ if not os.path.exists(RESULT_FOLDER):
 # WPPConnect API endpoint
 WPPCONNECT_URL = "http://localhost:21465/api/sendMessage"
 
-# Hardcoded contacts
-CONTACTS = [
-    # {"phone": "6282379883130", "name": "Ali", "type": "user"},
-    {"phone": "6282236981385", "name": "Indra", "type": "admin"},
-    # {"phone": "6281331890887", "name": "Sani", "type": "admin"},
-]
+# Contacts loaded from Excel
+CONTACTS = []
 
 # Debug mode: set to a specific date to test (e.g., "2024-01-15") or None for today
 DEBUG_DATE = "2025-01-01"
@@ -53,6 +49,30 @@ def read_excel_file(filename="api_response.xlsx"):
     except Exception as e:
         print(f"ERROR: Failed to read Excel file - {str(e)}")
         return None
+
+def read_contacts_file(filename="contacts.xlsx"):
+    """Read contacts Excel file and return list of contacts"""
+    try:
+        df = pd.read_excel(filename)
+        required_columns = {"phone", "name", "type"}
+        missing = required_columns - set(df.columns.str.lower())
+        if missing:
+            print(f"ERROR: Contacts file missing columns: {sorted(missing)}")
+            return []
+
+        # Normalize column names to lowercase
+        df.columns = [c.lower() for c in df.columns]
+
+        contacts = (
+            df[["phone", "name", "type"]]
+            .dropna(subset=["phone", "name"])
+            .to_dict(orient="records")
+        )
+        print(f"Contacts loaded: {len(contacts)}")
+        return contacts
+    except Exception as e:
+        print(f"ERROR: Failed to read contacts file - {str(e)}")
+        return []
 
 def send_whatsapp_message(phone, message):
     """Send WhatsApp message using WPPConnect"""
@@ -280,6 +300,12 @@ def save_results(results, filename="whatsapp_results.xlsx"):
 
 def main():
     """Main function"""
+    global CONTACTS
+    CONTACTS = read_contacts_file()
+    if not CONTACTS:
+        print("No contacts found. Please check contacts.xlsx")
+        return
+
     # Read Excel file
     df = read_excel_file()
     if df is None:

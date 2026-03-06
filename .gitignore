@@ -3,3 +3,4 @@ wppconnect-server/node_modules/
 result/
 wppconnect-server/tokens/
 __pycache__/*
+contacts.xlsx

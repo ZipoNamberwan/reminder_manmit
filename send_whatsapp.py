@@ -163,15 +163,16 @@ def get_initial_reminder_message(df):
             print("No reminders for today")
             return None, []
         
-        # Get unique kd_survei
-        kd_survei_list = matching_rows['kd_survei'].unique().tolist()
-        print(f"Found {len(kd_survei_list)} unique kd_survei: {kd_survei_list}")
-        
+        # Build list of (kd_survei, nama_survei) tuples
+        survei_info = matching_rows[['kd_survei', 'nama_survei']].drop_duplicates().values.tolist()
+        print(f"Found {len(survei_info)} unique survei: {survei_info}")
+
         # Build message
         message = "Hari ini sudah mulai rekrutmen untuk survei berikut:\n"
-        for idx, kd in enumerate(kd_survei_list, 1):
-            message += f"{idx}. {kd}\n"
-        
+        for idx, (kd, nama) in enumerate(survei_info, 1):
+            message += f"{idx}. {kd} ({nama})\n"
+
+        kd_survei_list = [kd for kd, _ in survei_info]
         return message.strip(), kd_survei_list
     
     except Exception as e:
@@ -219,16 +220,17 @@ def get_final_reminder_message(df):
             if matching_rows.empty:
                 continue
             
-            # Get unique kd_survei
-            kd_survei_list = matching_rows['kd_survei'].unique().tolist()
-            print(f"Found {len(kd_survei_list)} unique kd_survei ending in {days_to_go} days: {kd_survei_list}")
-            
+            # Build list of (kd_survei, nama_survei) tuples
+            survei_info = matching_rows[['kd_survei', 'nama_survei']].drop_duplicates().values.tolist()
+            kd_survei_list = [kd for kd, _ in survei_info]
+            print(f"Found {len(survei_info)} unique survei ending in {days_to_go} days: {survei_info}")
+
             # Build message
-            message = f"✅ Pengingat! ✅\nSurvei berikut akan selesai pada {target_date} ({days_to_go} hari lagi):\n"
-            for idx, kd in enumerate(kd_survei_list, 1):
-                message += f"{idx}. {kd}\n"
-            message += "\nJangan lupa melakukan penawaran kerja ke mitra ya 🫰🏻"
-            
+            message = f"*[Manajemen Mitra]*\n\n✅ Pengingat! ✅\nSurvei berikut akan selesai pada {target_date} ({days_to_go} hari lagi):\n"
+            for idx, (kd, nama) in enumerate(survei_info, 1):
+                message += f"{idx}. {kd} - {nama}\n"
+            message += "\nJangan lupa melakukan penawaran kerja ke mitra di https://manajemen-mitra.bps.go.id 🫰🏻"
+
             reminders.append((message.strip(), kd_survei_list))
             
         return reminders

@@ -229,7 +229,7 @@ def get_final_reminder_message(df):
             message = f"*[Manajemen Mitra]*\n\n✅ Pengingat! ✅\nSurvei berikut akan selesai pada {target_date} ({days_to_go} hari lagi):\n"
             for idx, (kd, nama) in enumerate(survei_info, 1):
                 message += f"{idx}. {kd} - {nama}\n"
-            message += "\nJangan lupa melakukan penawaran kerja ke mitra di https://manajemen-mitra.bps.go.id 🫰🏻"
+            message += "\nJangan lupa melakukan penawaran kerja ke mitra di https://manajemen-mitra.bps.go.id dan pastikan mitra menerima penawaran kerjanya ya 🫰🏻"
 
             reminders.append((message.strip(), kd_survei_list))
             

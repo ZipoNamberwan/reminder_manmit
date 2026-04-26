@@ -1,10 +1,14 @@
 from selenium import webdriver
+from selenium.webdriver.edge.options import Options
+from selenium.webdriver.edge.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from dotenv import load_dotenv, dotenv_values
 import os
+import socket
+import subprocess
 import sys
 import time
 import json
@@ -20,53 +24,64 @@ RESULT_FOLDER = "result"
 if not os.path.exists(RESULT_FOLDER):
     os.makedirs(RESULT_FOLDER)
 
-# WPPConnect API endpoint for sending messages
-WPPCONNECT_URL = "http://localhost:21465/api/sendMessage"
-
-# Import contacts from send_whatsapp
-from send_whatsapp import CONTACTS
+# Import contacts helpers from send_whatsapp
+from send_whatsapp import CONTACTS, read_contacts_file, send_whatsapp_message
 
 # Load environment variables from .env file
 load_dotenv()
 env_vars = dotenv_values(".env")
 
-def send_error_notification(error_message):
-    """Send error notification to admin contacts"""
+def getAdminContacts():
+    """Load admin contacts from contacts.xlsx when needed."""
+    if not CONTACTS:
+        CONTACTS.extend(read_contacts_file())
+
+    return [c for c in CONTACTS if c.get("type") == "admin"]
+
+def send_admin_notification(message, label):
+    """Send a WhatsApp notification to all admin contacts."""
     try:
-        # Filter admin contacts
-        admin_contacts = [c for c in CONTACTS if c.get("type") == "admin"]
-        
+        admin_contacts = getAdminContacts()
+
         if not admin_contacts:
             print("No admin contacts to notify")
             return
-        
-        message = f"❌ Error: Gagal mengunduh data survei.\n\nError: {error_message}"
-        
-        print(f"\nSending error notification to {len(admin_contacts)} admin(s)...")
+
+        print(f"\nSending {label} notification to {len(admin_contacts)} admin(s)...")
         print("=" * 80)
-        
+
         for contact in admin_contacts:
             phone = contact["phone"]
             name = contact["name"]
-            
+
             try:
-                payload = {
-                    "phone": phone,
-                    "message": message
-                }
-                response = requests.post(WPPCONNECT_URL, json=payload, timeout=5)
-                if response.status_code == 200:
+                if send_whatsapp_message(phone, message):
                     print(f"✓ Notified {name} ({phone})")
                 else:
                     print(f"✗ Failed to notify {name} ({phone})")
             except Exception as e:
                 print(f"✗ Error notifying {name} ({phone}): {str(e)}")
-            
+
             time.sleep(1)
-        
+
         print("=" * 80)
     except Exception as e:
-        print(f"Error sending notification: {str(e)}")
+        print(f"Error sending {label} notification: {str(e)}")
+
+def send_error_notification(error_message):
+    """Send error notification to admin contacts"""
+    message = f"❌ Error: Gagal mengunduh data survei.\n\nError: {error_message}"
+    send_admin_notification(message, "error")
+
+def send_success_notification(record_count, filename="api_response.xlsx"):
+    """Send success notification to admin contacts."""
+    filepath = os.path.join(RESULT_FOLDER, filename)
+    message = (
+        "✅ Success: Data survei berhasil diunduh.\n\n"
+        f"Jumlah data: {record_count}\n"
+        f"File: {filepath}"
+    )
+    send_admin_notification(message, "success")
 
 def getCredentialsFromEnv():
     """Get username and password from .env file"""
@@ -124,10 +139,39 @@ def clickLoginSsoButton(driver):
         button = driver.find_element(By.XPATH, "/html/body/div/div[1]/div/div/div/div/span/form/div/div[4]/button")
         button.click()
         print("Button clicked!")
+        return True
     except NoSuchElementException:
         print("ERROR: Button with the specified XPath not found!")
+        return False
     except Exception as e:
         print(f"ERROR: Failed to click button - {str(e)}")
+        return False
+
+def loginUiIsPresent(driver):
+    """Check whether the page is currently showing the SSO button or login form."""
+    sso_button_xpath = "/html/body/div/div[1]/div/div/div/div/span/form/div/div[4]/button"
+    username_xpath = "/html/body/div/div[2]/div/div/div/div/form/div[1]/input"
+
+    for xpath in (sso_button_xpath, username_xpath):
+        try:
+            driver.find_element(By.XPATH, xpath)
+            return True
+        except NoSuchElementException:
+            continue
+
+    return False
+
+def completeLoginIfNeeded(driver):
+    """Run the SSO/login flow when the launcher still shows login UI."""
+    if not loginUiIsPresent(driver):
+        print("Login UI not detected. Assuming session is already authenticated.")
+        return True
+
+    clickLoginSsoButton(driver)
+    if not fillAndSubmitLoginForm(driver):
+        return False
+
+    return waitForPageLoadAfterLogin(driver)
 
 def waitForPageLoadAfterLogin(driver):
     """Wait for the page to load successfully after login"""
@@ -245,21 +289,300 @@ def saveResponseToExcel(captured_data, filename="api_response.xlsx"):
         traceback.print_exc()
         return False
 
-# Create a Chrome driver instance
-# Note: Make sure you have ChromeDriver installed and in your PATH
-# Download from: https://chromedriver.chromium.org/
-# For network request capture, this uses selenium-wire
-# Install with: pip install selenium-wire
-try:
-    from seleniumwire import webdriver as wire_webdriver
-    driver = wire_webdriver.Chrome()
-except ImportError:
-    print("WARNING: selenium-wire not installed. Using regular webdriver without request capture.")
-    print("Install with: pip install selenium-wire")
-    driver = webdriver.Chrome()
+def is_debug_port_open(port):
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=1):
+            return True
+    except Exception:
+        return False
 
-# Maximize the window
-driver.maximize_window()
+def startEdgeDebugSession(port):
+    """Start Edge with remote debugging enabled using the configured profile directory."""
+    edge_path = env_vars.get("EDGE_PATH") or r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    user_data_dir = env_vars.get("EDGE_USER_DATA_DIR") or r"C:\edge-dev-profile"
+
+    if not os.path.exists(edge_path):
+        print(f"ERROR: EDGE_PATH not found: {edge_path}")
+        return False
+
+    command = [
+        edge_path,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={user_data_dir}",
+    ]
+
+    try:
+        print(f"Starting Edge debug session on port {port}...")
+        subprocess.Popen(command)
+        for _ in range(30):
+            if is_debug_port_open(port):
+                print("Edge debug port is ready.")
+                time.sleep(2)
+                return True
+            time.sleep(1)
+    except Exception as e:
+        print(f"ERROR: Failed to start Edge debug session - {str(e)}")
+
+    print(f"ERROR: Edge debug port {port} did not open in time")
+    return False
+
+def createDriver():
+    """Create Edge driver, preferring an existing Edge session when configured."""
+    use_existing_browser = str(env_vars.get("USE_EXISTING_BROWSER", "true")).lower() in ("1", "true", "yes")
+    auto_start_edge = str(env_vars.get("AUTO_START_EDGE_DEBUG", "true")).lower() in ("1", "true", "yes")
+    allow_fresh_browser_fallback = str(env_vars.get("USE_FRESH_BROWSER_FALLBACK", "false")).lower() in ("1", "true", "yes")
+    debug_port = str(env_vars.get("EDGE_DEBUG_PORT", env_vars.get("CHROME_DEBUG_PORT", "9222")))
+    driver_path = env_vars.get("EDGE_DRIVER_PATH") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "msedgedriver.exe")
+
+    if not os.path.exists(driver_path):
+        raise RuntimeError(f"EdgeDriver not found: {driver_path}")
+
+    service = Service(driver_path)
+
+    if use_existing_browser:
+        if auto_start_edge and not is_debug_port_open(debug_port):
+            if not startEdgeDebugSession(debug_port):
+                if not allow_fresh_browser_fallback:
+                    raise RuntimeError(
+                        f"Could not start Edge debug session on port {debug_port}. "
+                        "Open Edge manually with remote debugging or verify EDGE_PATH and EDGE_USER_DATA_DIR."
+                    )
+
+        if is_debug_port_open(debug_port):
+            options = Options()
+            options.add_experimental_option("debuggerAddress", f"127.0.0.1:{debug_port}")
+            driver = webdriver.Edge(service=service, options=options)
+            print(f"Connected to existing Edge session at 127.0.0.1:{debug_port}")
+            return driver, True
+
+        if not allow_fresh_browser_fallback:
+            raise RuntimeError(
+                f"Could not attach to existing Edge at 127.0.0.1:{debug_port}. "
+                "Set USE_FRESH_BROWSER_FALLBACK=true only if you intentionally want a fresh automated browser."
+            )
+
+    print("Starting a fresh Edge browser instance.")
+    return webdriver.Edge(service=service), False
+
+def getAuthTokenFromBrowser(driver):
+        """Try to locate an auth token in localStorage or sessionStorage."""
+        script = """
+const storages = [window.localStorage, window.sessionStorage];
+const tokenHints = ['token', 'access', 'auth', 'jwt', 'bearer'];
+
+function looksLikeJwt(value) {
+    return typeof value === 'string' && value.split('.').length === 3;
+}
+
+function searchValue(value) {
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return null;
+        }
+
+        if (trimmed.startsWith('Bearer ')) {
+            return trimmed;
+        }
+
+        if (looksLikeJwt(trimmed)) {
+            return trimmed;
+        }
+
+        try {
+            return searchValue(JSON.parse(trimmed));
+        } catch (e) {
+            return null;
+        }
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const found = searchValue(item);
+            if (found) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    if (value && typeof value === 'object') {
+        for (const [key, nestedValue] of Object.entries(value)) {
+            const loweredKey = key.toLowerCase();
+            if (tokenHints.some((hint) => loweredKey.includes(hint))) {
+                const found = searchValue(nestedValue);
+                if (found) {
+                    return found;
+                }
+            }
+        }
+
+        for (const nestedValue of Object.values(value)) {
+            const found = searchValue(nestedValue);
+            if (found) {
+                return found;
+            }
+        }
+    }
+
+    return null;
+}
+
+for (const storage of storages) {
+    for (let index = 0; index < storage.length; index++) {
+        const key = storage.key(index);
+        const value = storage.getItem(key);
+        const loweredKey = (key || '').toLowerCase();
+
+        if (tokenHints.some((hint) => loweredKey.includes(hint))) {
+            const found = searchValue(value);
+            if (found) {
+                return { key, token: found };
+            }
+        }
+
+        const nested = searchValue(value);
+        if (nested) {
+            return { key, token: nested };
+        }
+    }
+}
+
+return null;
+"""
+
+        try:
+                token_info = driver.execute_script(script)
+                if token_info and token_info.get("token"):
+                        print(f"Found auth token in browser storage key: {token_info.get('key')}")
+                        return token_info.get("token")
+        except Exception as e:
+                print(f"WARNING: Could not inspect browser storage for auth token - {str(e)}")
+
+        return None
+
+def fetchApiInBrowser(driver, target_url, auth_token=None):
+    """Call the API from inside the browser context so existing session/auth state is preserved."""
+    script = """
+const targetUrl = arguments[0];
+const authToken = arguments[1];
+const callback = arguments[arguments.length - 1];
+
+const headers = {
+    'Accept': 'application/json, text/plain, */*'
+};
+
+if (authToken) {
+    headers['Authorization'] = authToken.startsWith('Bearer ') ? authToken : `Bearer ${authToken}`;
+}
+
+fetch(targetUrl, {
+    method: 'GET',
+    credentials: 'include',
+    headers
+}).then(async (response) => {
+    const text = await response.text();
+    callback({
+        ok: response.ok,
+        status: response.status,
+        text
+    });
+}).catch((error) => {
+    callback({
+        ok: false,
+        error: String(error)
+    });
+});
+"""
+
+    try:
+        result = driver.execute_async_script(script, target_url, auth_token)
+        if result.get("error"):
+            print(f"ERROR: Browser fetch failed - {result['error']}")
+            return []
+
+        print(f"Browser API status: {result.get('status')}")
+        if not result.get("ok"):
+            return []
+
+        return [{
+            "url": target_url,
+            "method": "GET",
+            "response": json.loads(result.get("text", "{}")),
+        }]
+    except Exception as e:
+        print(f"ERROR: Failed to fetch API in browser context - {str(e)}")
+        return []
+
+def captureDataWithBrowserSession(driver, target_url):
+    """Fetch API response using cookies from the active browser session."""
+    try:
+        auth_token = getAuthTokenFromBrowser(driver)
+        browser_captured_data = fetchApiInBrowser(driver, target_url, auth_token=auth_token)
+        if browser_captured_data:
+            return browser_captured_data
+
+        session = requests.Session()
+
+        for cookie in driver.get_cookies():
+            session.cookies.set(
+                cookie.get("name"),
+                cookie.get("value"),
+                domain=cookie.get("domain"),
+                path=cookie.get("path", "/")
+            )
+
+        headers = {
+            "User-Agent": driver.execute_script("return navigator.userAgent;"),
+            "Accept": "application/json, text/plain, */*",
+            "Referer": driver.current_url,
+        }
+
+        if auth_token:
+            headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
+
+        response = session.get(target_url, headers=headers, timeout=20)
+        print(f"Session API status: {response.status_code}")
+        response.raise_for_status()
+
+        return [{
+            "url": target_url,
+            "method": "GET",
+            "response": response.json(),
+        }]
+    except Exception as e:
+        print(f"ERROR: Failed to fetch API via browser session - {str(e)}")
+        return []
+
+def waitForApiSessionReady(driver, target_url, timeout_seconds=180, interval_seconds=5):
+    """Wait until the attached browser session is authenticated and API data is available."""
+    start_time = time.time()
+    while time.time() - start_time < timeout_seconds:
+        captured_data = captureDataWithBrowserSession(driver, target_url)
+        if captured_data and captured_data[0].get("response"):
+            print("Authenticated Edge session is ready.")
+            return captured_data
+
+        elapsed = int(time.time() - start_time)
+        print(f"Session not ready yet ({elapsed}s). Retrying in {interval_seconds}s...")
+        time.sleep(interval_seconds)
+
+    print(f"ERROR: Session did not become ready within {timeout_seconds} seconds")
+    return []
+
+driver = None
+is_existing_browser = False
+
+try:
+    driver, is_existing_browser = createDriver()
+except Exception as startup_error:
+    print(f"\n✗ STARTUP ERROR: {str(startup_error)}")
+    send_error_notification(str(startup_error))
+    sys.exit(1)
+
+# Maximize only when opening a fresh browser instance
+if not is_existing_browser:
+    driver.maximize_window()
 
 try:
     # Open a website
@@ -269,20 +592,33 @@ try:
     
     # Wait for the page to load
     time.sleep(3)
-    
 
-    # Click the login SSO button
-    clickLoginSsoButton(driver)
+    is_interactive = sys.stdin.isatty()
+    require_manual_login = str(env_vars.get("REQUIRE_MANUAL_LOGIN_CONFIRM", "false")).lower() in ("1", "true", "yes")
+
+    if is_existing_browser:
+        print("Using existing Edge browser session.")
+        if require_manual_login and is_interactive:
+            print("Please complete login manually if needed, then press Enter to continue...")
+            input()
+        else:
+            completeLoginIfNeeded(driver)
+    else:
+        completeLoginIfNeeded(driver)
     
-    # Fill and submit the login form
-    fillAndSubmitLoginForm(driver)
-    
-    # Wait for the page to load successfully after login
-    waitForPageLoadAfterLogin(driver)
-    
-    # Capture network requests matching the API endpoint
+    # Fetch the API using the browser's authenticated session
     api_url = "https://mitra-api.bps.go.id/api/dashboard/kegiatan-aktif"
-    captured_data = captureNetworkRequest(driver, api_url)
+    if is_existing_browser and not require_manual_login:
+        wait_timeout = int(env_vars.get("SESSION_READY_TIMEOUT", "180"))
+        retry_interval = int(env_vars.get("SESSION_RETRY_INTERVAL", "5"))
+        captured_data = waitForApiSessionReady(
+            driver,
+            api_url,
+            timeout_seconds=wait_timeout,
+            interval_seconds=retry_interval
+        )
+    else:
+        captured_data = captureDataWithBrowserSession(driver, api_url)
     
     # Print the captured response data
     if captured_data:
@@ -299,7 +635,13 @@ try:
         print("="*80 + "\n")
         
         # Save the response data to Excel
-        saveResponseToExcel(captured_data)
+        if not saveResponseToExcel(captured_data):
+            raise RuntimeError("Failed to save API response to Excel")
+
+        record_count = len(captured_data[0]["response"].get("data", []))
+        send_success_notification(record_count)
+    else:
+        raise RuntimeError("No data captured from the API")
     
     # Keep the browser open for 5 seconds before closing
     time.sleep(5)
@@ -309,6 +651,10 @@ except Exception as error:
     send_error_notification(str(error))
     
 finally:
-    # Close the browser
-    driver.quit()
-    print("Browser closed.")
+    if driver is None:
+        print("Browser was not started.")
+    elif is_existing_browser:
+        print("Attached Edge browser was not closed.")
+    else:
+        driver.quit()
+        print("Browser closed.")

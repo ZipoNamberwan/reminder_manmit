@@ -77,11 +77,42 @@ def send_success_notification(record_count, filename="api_response.xlsx"):
     """Send success notification to admin contacts."""
     filepath = os.path.join(RESULT_FOLDER, filename)
     message = (
-        "✅ Success: Data survei berhasil diunduh.\n\n"
+        "✅ Success: Data survei di Manajemen Mitra berhasil diunduh.\n\n"
         f"Jumlah data: {record_count}\n"
         f"File: {filepath}"
     )
     send_admin_notification(message, "success")
+
+def logoutFromWeb(driver, close_browser=False):
+    """Log out from the web application and optionally close the browser session."""
+    menu_xpath = "/html/body/div/div[1]/div[1]/div[1]/div[1]/div/div/div/a"
+    confirm_xpath = "/html/body/div/div[1]/div[1]/div[1]/div[1]/div/div/div/div"
+
+    try:
+        wait = WebDriverWait(driver, 10)
+
+        logout_menu = wait.until(EC.element_to_be_clickable((By.XPATH, menu_xpath)))
+        logout_menu.click()
+        print("Logout menu clicked.")
+
+        logout_confirm = wait.until(EC.element_to_be_clickable((By.XPATH, confirm_xpath)))
+        logout_confirm.click()
+        print("Logout confirmation clicked.")
+
+        if close_browser:
+            driver.quit()
+            print("Browser closed after logout.")
+
+        return True
+    except TimeoutException:
+        print("ERROR: Logout elements did not appear within 10 seconds!")
+        return False
+    except NoSuchElementException:
+        print("ERROR: Logout element not found!")
+        return False
+    except Exception as e:
+        print(f"ERROR: Failed to log out - {str(e)}")
+        return False
 
 def getCredentialsFromEnv():
     """Get username and password from .env file"""
@@ -639,6 +670,9 @@ try:
             raise RuntimeError("Failed to save API response to Excel")
 
         record_count = len(captured_data[0]["response"].get("data", []))
+        if not logoutFromWeb(driver, close_browser=True):
+            raise RuntimeError("Failed to log out from the web application")
+        driver = None
         send_success_notification(record_count)
     else:
         raise RuntimeError("No data captured from the API")
@@ -653,8 +687,6 @@ except Exception as error:
 finally:
     if driver is None:
         print("Browser was not started.")
-    elif is_existing_browser:
-        print("Attached Edge browser was not closed.")
     else:
         driver.quit()
         print("Browser closed.")
